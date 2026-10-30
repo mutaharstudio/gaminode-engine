@@ -1,0 +1,59 @@
+# Builds the Gaminode LEGO asset zips on GitHub's servers and uploads them to the release "assets-v1".
+# Your laptop's internet is not used: Actions -> "LEGO assets (assets-v1)" -> Run workflow.
+# Licenses: only CC0 (Kenney, KayKit, Poly Haven, ambientCG, Quaternius) and CC-BY 3.0 (game-icons.net, credited in CREDITS.txt).
+# Every uploaded file name starts with "lego-" (or is CREDITS.txt), so files already on assets-v1 are not touched.
+name: LEGO assets (assets-v1)
+
+on:
+  workflow_dispatch:
+    inputs:
+      extra:
+        description: "Also fetch Poly Haven + ambientCG (CC0 textures, HDRIs, models)"
+        type: choice
+        options: ["yes", "no"]
+        default: "yes"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools/lego_assets
+          fetch-depth: 1
+
+      - name: Get the CC0 / CC-BY sources
+        run: |
+          mkdir -p src/kaykit src/extra
+          git clone -q --depth 1 https://github.com/ETdoFresh/kenney.nl src/kenney
+          for r in KayKit-Dungeon-Remastered-1.0 KayKit-Character-Pack-Adventures-1.0 KayKit-Prototype-Bits-1.0 \
+                   KayKit-Medieval-Hexagon-Pack-1.0 KayKit-City-Builder-Bits-1.0 KayKit-Furniture-Bits-1.0 \
+                   KayKit-Restaurant-Bits-1.0 KayKit-Space-Base-Bits-1.0 KayKit-Character-Pack-Skeletons-1.0 KayKit-Halloween-Bits-1.0; do
+            git clone -q --depth 1 https://github.com/KayKit-Game-Assets/$r src/kaykit/$r
+          done
+          git clone -q --depth 1 https://github.com/game-icons/icons src/game-icons
+          du -sh src/*
+
+      - name: Poly Haven + ambientCG (CC0, public APIs)
+        if: ${{ inputs.extra == 'yes' }}
+        run: python3 tools/lego_assets/fetch_extra_sources.py --out src/extra
+
+      - name: Build the zips
+        run: |
+          python3 tools/lego_assets/build_release.py --kenney src/kenney --kaykit src/kaykit --gameicons src/game-icons \
+            --extra src/extra --out out --release-json out/lego-release.json
+          ls -la out | head -50
+
+      - name: Upload to release assets-v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view assets-v1 >/dev/null 2>&1 || gh release create assets-v1 --title "Gaminode assets v1" \
+            --notes "Free game assets for Gaminode AI (CC0 / CC-BY 3.0). Credits: CREDITS.txt"
+          cd out
+          gh release upload assets-v1 lego-*.zip lego-manifest.json lego-release.json CREDITS.txt --clobber
+          echo "Uploaded $(ls lego-*.zip | wc -l) zips"
